@@ -42,7 +42,8 @@ class Results_1:
                 html = requests.get(url)
                 html.encoding = "EUC-JP"
                 # メインとなるテーブルデータを取得
-                df = pd.read_html(html.text)[0]
+                buffer = StringIO(html.text)
+                df = pd.read_html(buffer)[0]
                 # 天候、レースの種類、コースの長さ、馬場の状態、日付をスクレイピング
                 soup = BeautifulSoup(html.text, "html.parser")
                 texts = (
@@ -535,7 +536,8 @@ class Results_2(DataProcessor):
                 html.encoding = "EUC-JP"
 
                 #メインとなるテーブルデータを取得
-                df = pd.read_html(html.text)[0]
+                buffer = StringIO(html.text)
+                df = pd.read_html(buffer)[0]
                 # 列名に半角スペースがあれば除去する
                 df = df.rename(columns=lambda x: x.replace(' ', ''))
 
@@ -666,7 +668,8 @@ class ShutubaTable(DataProcessor):
             html = requests.get(url)
             html.encoding = "EUC-JP"
 
-            df = pd.read_html(html.text)[0]
+            buffer = StringIO(html.text)
+            df = pd.read_html(buffer)[0]
             # 列名に半角スペースがあれば除去する
             df = df.rename(columns=lambda x: x.replace(' ', ''))
             df = df.T.reset_index(level=0, drop=True).T
