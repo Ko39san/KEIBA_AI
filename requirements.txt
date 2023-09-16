@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+scikit-learn
+lightgbm
+requests
+beautifulsoup4
+regex
+urllib3
+optuna
+matplotlib
