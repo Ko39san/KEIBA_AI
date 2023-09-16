@@ -1470,7 +1470,9 @@ def load_data(race_id):
     html.encoding = "EUC-JP"
 
     try:
-        df = pd.read_html(StringIO(html.text))[0]
+        html_text = html.text
+        buffer = StringIO(html_text)
+        df = pd.read_html(buffer)[0]
         df.columns = df.iloc[0]
         column_names = ['枠', '馬 番', '印', '馬名', '性齢', '斤量', '騎手', '厩舎', '馬体重 (増減)', '予想オッズ', '人気', '登録', 'メモ']
         df.columns = column_names
