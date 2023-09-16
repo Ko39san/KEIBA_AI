@@ -9,3 +9,4 @@ regex
 urllib3
 optuna
 matplotlib
+lxml
