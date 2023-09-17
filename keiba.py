@@ -1610,4 +1610,104 @@ for race_id, group_data in sorted_predictions.groupby(level=0):
     break
 
 
+if st.button('AI予想'):
+    st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
+
+    # race_id_list の生成
+    race_id_list = [f"{base_race_id}{str(i).zfill(2)}" for i in range(1, 13)]
+
+
+    # Results クラスの scrape メソッドを使用
+    results = Results_1.scrape(race_id_list)
+    results = results.rename(columns=lambda x: x.replace(' ', ''))
+    st.write("出馬表: ", results)
+    race_id_list = results.index.unique()
+
+    #return_tables = Return.scrape(race_id_list)
+    horse_id_list = results['horse_id'].unique()
+    horse_results = HorseResults_1.scrape(horse_id_list)
+    horse_results = horse_results.rename(columns=lambda x: x.replace(' ', ''))
+    st.write("出走馬の過去成績情報: ", horse_results)
+
+    peds = Peds.scrape(horse_id_list)
+    st.write("出走馬の血統情報: ", peds)
+
+    #Resultsクラスのオブジェクト作成
+    r = Results_2(results)
+    #前処理
+    r.preprocessing()
+
+    #馬の過去成績データ追加
+    hr = HorseResults_2(horse_results)
+    r.merge_horse_results(hr)
+
+    #血統データ追加
+    p = Peds(peds)
+    p.encode()
+    r.merge_horse_results(hr, n_samples_list=[5, 9, 'all'])
+    r.merge_peds(p.peds_e)
+    r.process_categorical()
+
+
+    # LightGBMモデルを読み込む
+    #lgb_clf = lgb.Booster(model_file="/Users/yamanekousaku/Desktop/競馬予想AI/機械学習モデル/lgb_model.txt")
+
+    # 以下は既存のStreamlitアプリのコード
+    # ...
+
+    #時系列に沿って訓練データとテストデータに分ける関数
+    def split_data(df, test_size=0.3):
+        sorted_id_list = df.sort_values("date").index.unique()
+        train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
+        test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
+        train = df.loc[train_id_list]
+        test = df.loc[test_id_list]
+        return train, test
+
+    data_c =  r.data_c.drop(['rank', 'date', '単勝'], axis=1)
+
+    # 追加したい列名のリスト
+    columns_to_add = ['weather_雪', 'weather_小雪', 'ground_state_重', 'weather_小雨', 'weather_曇', 'weather_雨', 'race_type_障害', 'ground_state_稍重', 'ground_state_不良']
+
+    # データフレームに存在しない列名だけを追加
+    for col in columns_to_add:
+        if col not in data_c.columns:
+            data_c[col] = 0  # 数値の0を入れる
+
+    # 予測を実施
+    predictions = lgb_clf.predict(data_c)
+
+    # 予測結果をdata_cに追加
+    data_c['Predicted_Rank'] = predictions
+
+    # 予測結果を降順にソート
+    sorted_predictions = data_c.sort_values(by=['Predicted_Rank'], ascending=False)
+
+    # TOP3の予測結果を抽出
+    top_3_per_race = data_c.groupby(level=0).apply(lambda x: x.nlargest(3, 'Predicted_Rank'))
+
+    # 各レースごとに出馬表とTOP3を表示
+    for race_id, group_data in sorted_predictions.groupby(level=0):
+
+        # df（出馬表）を対応するrace_idで更新する
+        df = load_data(race_id)
+
+        if df is not None:
+            # race_idと馬番が一致する行の'AI予想'列にPredicted_Rankの値を挿入
+            for _, row in group_data.iterrows():
+                horse_number = row['馬番']
+                predicted_rank = row['Predicted_Rank']
+                df.loc[df['馬 番'] == horse_number, 'AI予想'] = predicted_rank
+
+            # 追加の情報とともに出馬表を表示
+            additional_data = load_additional_data(race_id)
+            if additional_data:
+                st.markdown(f"**レース名:** {additional_data['race_name']}")
+
+            st.dataframe(df)
+
+        # そのレースのTOP3予測を表示
+        if race_id in top_3_per_race.index.levels[0]:
+            top_3_data = top_3_per_race.loc[race_id]
+            st.dataframe(top_3_data[['馬番', 'Predicted_Rank']])
