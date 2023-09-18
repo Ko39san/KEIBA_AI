@@ -878,11 +878,11 @@ day_options = ["1日目", "2日目", "3日目", "4日目", "5日目", "6日目",
 selected_day = st.selectbox("何日目か選択してください", day_options)
 day_number = int(selected_day[0])
 
-race_number = st.selectbox("何レースかを選択してください", list(range(1, 12)))
+#race_number = st.selectbox("何レースかを選択してください", list(range(1, 12)))
 
 
 
-base_race_id = f"2023{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}{race_number:02d}"
+base_race_id = f"2023{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}"
 
 
 st.write(f"選択された日付は {formatted_date} です")
