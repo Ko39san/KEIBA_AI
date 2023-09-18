@@ -557,7 +557,9 @@ class Peds:
             time.sleep(1)
             try:
                 url = "https://db.netkeiba.com/horse/ped/" + horse_id
-                df = pd.read_html(url)[0]
+                html = requests.get(url)
+                html.encoding = "EUC-JP"
+                df = pd.read_html(html.text)[0]
 
                 generations = {}
                 for i in reversed(range(5)):
@@ -933,6 +935,8 @@ if st.button('AI予想'):
     hr = HorseResults(horse_results)
     #馬の過去成績データの追加。新馬はNaNが追加される
     sta.merge_horse_results(hr)
+
+
 
     peds = Peds.scrape(horse_id_list)
     st.write("出走馬の血統情報: ", peds)
