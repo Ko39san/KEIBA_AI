@@ -916,31 +916,32 @@ base_race_id = f"{year}{racecourse_map[racecourse]}{holding_number:02d}{day_numb
 st.write(f"RACE_IDは {base_race_id} です。")
 
 
-# データをロード
-df = load_data(base_race_id)
-additional_data = load_additional_data(base_race_id)
+if st.button('出馬表'):
+    # データをロード
+    df = load_data(base_race_id)
+    additional_data = load_additional_data(base_race_id)
 
-if additional_data:
-    # 日付情報を取得
-    st.write(f"開催日： {additional_data['race_date']}")  
-    st.write(f"レース名: {additional_data['race_name']}")
-    
+    if additional_data:
+        # 日付情報を取得
+        st.write(f"開催日： {additional_data['race_date']}")  
+        st.write(f"レース名: {additional_data['race_name']}")
+        
+    # DataFrameを表示
+    if df is not None:
+        st.table(df)
+    else:
+        st.write('データをロードできませんでした。')
 
-# DataFrameを表示
-if df is not None:
-    st.table(df)
-else:
-    st.write('データをロードできませんでした。')
 
 
-additional_data = load_additional_data(base_race_id)
-race_date = additional_data['race_date'] if additional_data else None
 
 
 
 if st.button('AI予想'):
     st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
+    additional_data = load_additional_data(base_race_id)
+    race_date = additional_data['race_date'] if additional_data else None
     #race_id_list の生成
     #race_id_list = [f"{2023010101}{str(i).zfill(2)}" for i in range(1, 13)]
     race_id_list = [base_race_id]
