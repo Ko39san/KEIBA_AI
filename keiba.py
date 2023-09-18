@@ -916,7 +916,7 @@ if st.button('AI予想'):
     #race_id_list = [base_race_id]
     sta = ShutubaTable.scrape(race_id_list, formatted_date)
     sta.data = sta.data.rename(columns=lambda x: x.replace(' ', ''))
-    
+    st.write("出馬表: ", sta.data)
     #前処理
     sta.preprocessing()
 
