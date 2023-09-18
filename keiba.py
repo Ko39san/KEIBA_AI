@@ -680,7 +680,6 @@ def load_additional_data(base_race_id):
         st.write(f"追加データの取得中にエラーが発生しました: {e}")
         return None
 
-
 def generate_column_names():
     column_names = ['枠番',
  '馬番',
@@ -870,6 +869,13 @@ def generate_column_names():
     return column_names
 
 
+
+
+
+
+
+
+
 # Streamlit UI
 st.title("競馬AI予想🐎")
 
@@ -935,8 +941,6 @@ if st.button('出馬表'):
 
 
 
-
-
 if st.button('AI予想'):
     st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
@@ -950,7 +954,7 @@ if st.button('AI予想'):
     horse_id_list = sta.data['horse_id'].unique()
     #前処理
     sta.preprocessing()
-    #st.write("出馬表: ", sta.data)
+    st.write("出馬表: ", sta.data)
     
     horse_results = HorseResults.scrape(horse_id_list)
     
