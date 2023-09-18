@@ -301,7 +301,9 @@ class ShutubaTable(DataProcessor):
             html = requests.get(url)
             html.encoding = "EUC-JP"
 
-            df = pd.read_html(html.text)[0]
+            buffer = StringIO(html.text)
+            df = pd.read_html(buffer)[0]
+
             # 列名に半角スペースがあれば除去する
             df = df.rename(columns=lambda x: x.replace(' ', ''))
             df = df.T.reset_index(level=0, drop=True).T
@@ -914,9 +916,6 @@ else:
 
 
 
-
-
-
 if st.button('AI予想'):
     st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
@@ -979,16 +978,6 @@ if st.button('AI予想'):
     st.write("5世代分の血統データの追加: ", data_pe)
 
 
-
-
-
-
-
-
-
-
-
-
     # LightGBMモデルを読み込む
     lgb_clf = lgb.Booster(model_file="lgb_model.txt")
 
@@ -1016,10 +1005,6 @@ if st.button('AI予想'):
     # 不足している特徴量に0を割り当てる
     for feature in missing_features:
         data_c[feature] = 0
-
-
-
-
 
 
     # 予測を実施
