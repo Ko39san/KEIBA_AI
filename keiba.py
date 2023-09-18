@@ -942,7 +942,7 @@ else:
 
 
 if st.button('AI予想'):
-    st.write('AI予想を開始致します。処理には15分〜20分かかります。')
+    
 
     additional_data = load_additional_data(base_race_id)
     race_date = additional_data['race_date'] if additional_data else None
@@ -954,13 +954,13 @@ if st.button('AI予想'):
     horse_id_list = sta.data['horse_id'].unique()
     #前処理
     sta.preprocessing()
-    st.write("出馬表: ", sta.data)
+    #st.write("出馬表: ", sta.data)
     
     horse_results = HorseResults.scrape(horse_id_list)
     
 
     horse_results = horse_results.rename(columns=lambda x: x.replace(' ', ''))
-    st.write("出走馬の過去成績情報: ", horse_results)
+    st.write("出走馬の過去成績情報（開催日より前の情報を特徴量とする）: ", horse_results)
     #馬の過去成績データ追加
     hr = HorseResults(horse_results)
     #馬の過去成績データの追加。新馬はNaNが追加される
@@ -1074,8 +1074,18 @@ if st.button('AI予想'):
 
             st.dataframe(df)
 
-        # そのレースのTOP3予測を表示
-        if race_id in top_3_per_race.index.levels[0]:
-            top_3_data = top_3_per_race.loc[race_id]
-            st.dataframe(top_3_data[['馬番', 'Predicted_Rank']])
+
+
+
+            # そのレースのTOP3予測を表示
+            if race_id in top_3_per_race.index.levels[0]:
+                top_3_data = top_3_per_race.loc[race_id]
+
+                # 列名を変更
+                top_3_data_renamed = top_3_data.rename(columns={'Predicted_Rank': 'AI予想'})
+
+                # Streamlit で表示
+                st.write(f"3位以内に入る確率")
+                st.dataframe(top_3_data_renamed[['AI予想', '馬番']])
+                
 
