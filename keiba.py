@@ -922,21 +922,21 @@ base_race_id = f"{year}{racecourse_map[racecourse]}{holding_number:02d}{day_numb
 st.write(f"RACE_IDは {base_race_id} です。")
 
 
-if st.button('出馬表'):
-    # データをロード
-    df = load_data(base_race_id)
-    additional_data = load_additional_data(base_race_id)
 
-    if additional_data:
-        # 日付情報を取得
-        st.write(f"開催日： {additional_data['race_date']}")  
-        st.write(f"レース名: {additional_data['race_name']}")
-        
-    # DataFrameを表示
-    if df is not None:
-        st.table(df)
-    else:
-        st.write('データをロードできませんでした。')
+# データをロード
+df = load_data(base_race_id)
+additional_data = load_additional_data(base_race_id)
+
+if additional_data:
+    # 日付情報を取得
+    st.write(f"開催日： {additional_data['race_date']}")  
+    st.write(f"レース名: {additional_data['race_name']}")
+    
+# DataFrameを表示
+if df is not None:
+    st.table(df)
+else:
+    st.write('データをロードできませんでした。')
 
 
 
