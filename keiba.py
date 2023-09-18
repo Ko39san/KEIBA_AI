@@ -917,10 +917,11 @@ if st.button('AI予想'):
     sta = ShutubaTable.scrape(race_id_list, formatted_date)
     sta.data = sta.data.rename(columns=lambda x: x.replace(' ', ''))
     st.write("出馬表: ", sta.data)
+    horse_id_list = sta.data['horse_id'].unique()
     #前処理
     sta.preprocessing()
-
-    horse_id_list = sta.data_p['horse_id'].unique()
+    st.write("出馬表: ", sta.data)
+    
     horse_results = HorseResults.scrape(horse_id_list)
     
 
