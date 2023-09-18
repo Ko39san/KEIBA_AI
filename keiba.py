@@ -923,8 +923,6 @@ if st.button('AI予想'):
     horse_id_list = sta.data_p['horse_id'].unique()
     horse_results = HorseResults.scrape(horse_id_list)
     
-    if not horse_results:
-        st.error("horse_results is empty")
 
     horse_results = horse_results.rename(columns=lambda x: x.replace(' ', ''))
     st.write("出走馬の過去成績情報: ", horse_results)
