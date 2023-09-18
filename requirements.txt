@@ -10,3 +10,4 @@ urllib3
 optuna
 matplotlib
 lxml
+html5lib
