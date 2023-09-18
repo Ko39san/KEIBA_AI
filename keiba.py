@@ -15,379 +15,7 @@ import optuna.integration.lightgbm as lgb_o
 from itertools import combinations, permutations
 import matplotlib.pyplot as plt
 from io import StringIO
-
-print("Current Directory:", os.getcwd())
-
-class Results_1:
-    @staticmethod
-    def scrape(race_id_list):
-        """
-        レース結果データをスクレイピングする関数
-        Parameters:
-        ----------
-        race_id_list : list
-            レースIDのリスト
-        Returns:
-        ----------
-        race_results_df : pandas.DataFrame
-            全レース結果データをまとめてDataFrame型にしたもの
-        """
-        #race_idをkeyにしてDataFrame型を格納
-        race_results = {}
-        for race_id in (race_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/race/" + race_id
-                # スクレイピング
-                html = requests.get(url)
-                html.encoding = "EUC-JP"
-                # メインとなるテーブルデータを取得
-                buffer = StringIO(html.text)
-                df = pd.read_html(buffer)[0]
-                # 天候、レースの種類、コースの長さ、馬場の状態、日付をスクレイピング
-                soup = BeautifulSoup(html.text, "html.parser")
-                texts = (
-                    soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-                    + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-                )
-                info = re.findall(r'\w+', texts)
-                for text in info:
-                    if text in ["芝", "ダート"]:
-                        df["race_type"] = [text] * len(df)
-                    if "障" in text:
-                        df["race_type"] = ["障害"] * len(df)
-                    if "m" in text:
-                        df["course_len"] = [int(re.findall(r"\d+", text)[-1])] * len(df)
-                    if text in ["良", "稍重", "重", "不良"]:
-                        df["ground_state"] = [text] * len(df)
-                    if text in ["曇", "晴", "雨", "小雨", "小雪", "雪"]:
-                        df["weather"] = [text] * len(df)
-                    if "年" in text:
-                        df["date"] = [text] * len(df)
-                #馬ID、騎手IDをスクレイピング
-                horse_id_list = []
-                horse_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                    "a", attrs={"href": re.compile("^/horse")}
-                )
-                for a in horse_a_list:
-                    horse_id = re.findall(r"\d+", a["href"])
-                    horse_id_list.append(horse_id[0])
-                jockey_id_list = []
-                jockey_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                    "a", attrs={"href": re.compile("^/jockey")}
-                )
-                for a in jockey_a_list:
-                    jockey_id = re.findall(r"\d+", a["href"])
-                    jockey_id_list.append(jockey_id[0])
-                df["horse_id"] = horse_id_list
-                df["jockey_id"] = jockey_id_list
-                #インデックスをrace_idにする
-                df.index = [race_id] * len(df)
-                race_results[race_id] = df
-            #存在しないrace_idを飛ばす
-            except IndexError:
-                continue
-            except AttributeError: #存在しないrace_idでAttributeErrorになるページもあるので追加
-                continue
-            #wifiの接続が切れた時などでも途中までのデータを返せるようにする
-            except Exception as e:
-                print(e)
-                break
-            #Jupyterで停止ボタンを押した時の対処
-            except:
-                break
-        #pd.DataFrame型にして一つのデータにまとめる
-        race_results_df = pd.concat([race_results[key] for key in race_results])
-        return race_results_df
-
-#馬の過去成績データを処理するクラス
-class HorseResults_1:
-    @staticmethod
-    def scrape(horse_id_list):
-        """
-        馬の過去成績データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        horse_id_list : list
-            馬IDのリスト
-
-        Returns:
-        ----------
-        horse_results_df : pandas.DataFrame
-            全馬の過去成績データをまとめてDataFrame型にしたもの
-        """
-
-        #horse_idをkeyにしてDataFrame型を格納
-        horse_results = {}
-        for horse_id in (horse_id_list):
-            time.sleep(1)
-            try:
-                url = 'https://db.netkeiba.com/horse/' + horse_id
-                df = pd.read_html(url)[3]
-                #受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
-                if df.columns[0]=='受賞歴':
-                    df = pd.read_html(url)[4]
-                df.index = [horse_id] * len(df)
-                horse_results[horse_id] = df
-            except IndexError:
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #pd.DataFrame型にして一つのデータにまとめる
-        horse_results_df = pd.concat([horse_results[key] for key in horse_results])
-
-        return horse_results_df
-
-#払い戻し表データを処理するクラス
-class Return:
-    @staticmethod
-    def scrape(race_id_list):
-        """
-        払い戻し表データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        race_id_list : list
-            レースIDのリスト
-
-        Returns:
-        ----------
-        return_tables_df : pandas.DataFrame
-            全払い戻し表データをまとめてDataFrame型にしたもの
-        """
-
-        return_tables = {}
-        for race_id in (race_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/race/" + race_id
-
-                #普通にスクレイピングすると複勝やワイドなどが区切られないで繋がってしまう。
-                #そのため、改行コードを文字列brに変換して後でsplitする
-                f = urlopen(url)
-                html = f.read()
-                html = html.replace(b'<br />', b'br')
-                dfs = pd.read_html(html)
-
-                #dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-                df = pd.concat([dfs[1], dfs[2]])
-
-                df.index = [race_id] * len(df)
-                return_tables[race_id] = df
-            except IndexError:
-                continue
-            except AttributeError: #存在しないrace_idでAttributeErrorになるページもあるので追加
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #pd.DataFrame型にして一つのデータにまとめる
-        return_tables_df = pd.concat([return_tables[key] for key in return_tables])
-        return return_tables_df
-
-    @staticmethod
-    def scrape(race_id_list):
-        """
-        払い戻し表データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        race_id_list : list
-            レースIDのリスト
-
-        Returns:
-        ----------
-        return_tables_df : pandas.DataFrame
-            全払い戻し表データをまとめてDataFrame型にしたもの
-        """
-
-        return_tables = {}
-        for race_id in (race_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/race/" + race_id
-
-                #普通にスクレイピングすると複勝やワイドなどが区切られないで繋がってしまう。
-                #そのため、改行コードを文字列brに変換して後でsplitする
-                f = urlopen(url)
-                html = f.read()
-                html = html.replace(b'<br />', b'br')
-                dfs = pd.read_html(html)
-
-                #dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-                df = pd.concat([dfs[1], dfs[2]])
-
-                df.index = [race_id] * len(df)
-                return_tables[race_id] = df
-            except IndexError:
-                continue
-            except AttributeError: #存在しないrace_idでAttributeErrorになるページもあるので追加
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #pd.DataFrame型にして一つのデータにまとめる
-        return_tables_df = pd.concat([return_tables[key] for key in return_tables])
-        return return_tables_df
-
-#馬の過去成績データを処理するクラス
-
-    @staticmethod
-    def scrape(horse_id_list):
-        """
-        馬の過去成績データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        horse_id_list : list
-            馬IDのリスト
-
-        Returns:
-        ----------
-        horse_results_df : pandas.DataFrame
-            全馬の過去成績データをまとめてDataFrame型にしたもの
-        """
-
-        #horse_idをkeyにしてDataFrame型を格納
-        horse_results = {}
-        for horse_id in (horse_id_list):
-            time.sleep(1)
-            try:
-                url = 'https://db.netkeiba.com/horse/' + horse_id
-                df = pd.read_html(url)[3]
-                #受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
-                if df.columns[0]=='受賞歴':
-                    df = pd.read_html(url)[4]
-                df.index = [horse_id] * len(df)
-                horse_results[horse_id] = df
-            except IndexError:
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #pd.DataFrame型にして一つのデータにまとめる
-        horse_results_df = pd.concat([horse_results[key] for key in horse_results])
-
-        return horse_results_df
-
-#血統データを処理するクラス
-class Peds_1:
-    @staticmethod
-    def scrape(horse_id_list):
-        """
-        血統データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        horse_id_list : list
-            馬IDのリスト
-
-        Returns:
-        ----------
-        peds_df : pandas.DataFrame
-            全血統データをまとめてDataFrame型にしたもの
-        """
-
-        peds_dict = {}
-        for horse_id in (horse_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/horse/ped/" + horse_id
-                df = pd.read_html(url)[0]
-
-                #重複を削除して1列のSeries型データに直す
-                generations = {}
-                for i in reversed(range(5)):
-                    generations[i] = df[i]
-                    df.drop([i], axis=1, inplace=True)
-                    df = df.drop_duplicates()
-                ped = pd.concat([generations[i] for i in range(5)]).rename(horse_id)
-
-                peds_dict[horse_id] = ped.reset_index(drop=True)
-            except IndexError:
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #列名をpeds_0, ..., peds_61にする
-        peds_df = pd.concat([peds_dict[key] for key in peds_dict], axis=1).T.add_prefix('peds_')
-
-        return peds_df
-    @staticmethod
-    def scrape(horse_id_list):
-        """
-        血統データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        horse_id_list : list
-            馬IDのリスト
-
-        Returns:
-        ----------
-        peds_df : pandas.DataFrame
-            全血統データをまとめてDataFrame型にしたもの
-        """
-
-        peds_dict = {}
-        for horse_id in (horse_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/horse/ped/" + horse_id
-                df = pd.read_html(url)[0]
-
-                #重複を削除して1列のSeries型データに直す
-                generations = {}
-                for i in reversed(range(5)):
-                    generations[i] = df[i]
-                    df.drop([i], axis=1, inplace=True)
-                    df = df.drop_duplicates()
-                ped = pd.concat([generations[i] for i in range(5)]).rename(horse_id)
-
-                peds_dict[horse_id] = ped.reset_index(drop=True)
-            except IndexError:
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #列名をpeds_0, ..., peds_61にする
-        peds_df = pd.concat([peds_dict[key] for key in peds_dict], axis=1).T.add_prefix('peds_')
-
-        return peds_df
-
-
-def update_data(old, new):
-    """
-    Parameters:
-    ----------
-    old : pandas.DataFrame
-        古いデータ
-    new : pandas.DataFrame
-        新しいデータ
-    """
-
-    filtered_old = old[~old.index.isin(new.index)]
-    return pd.concat([filtered_old, new])
+import datetime
 
 class DataProcessor:
     """
@@ -497,9 +125,9 @@ class DataProcessor:
 
         self.data_c = df
 
-class Results_2(DataProcessor):
+class Results(DataProcessor):
     def __init__(self, results):
-        super(Results_2, self).__init__()
+        super(Results, self).__init__()
         self.data = results
 
     @classmethod
@@ -611,30 +239,35 @@ class Results_2(DataProcessor):
 
         # 着順に数字以外の文字列が含まれているものを取り除く
         # 全角スペースを削除
-        df['着順'] = pd.to_numeric(df['着順'], errors='coerce')
-        df.dropna(subset=['着順'], inplace=True)
-        df['着順'] = df['着順'].astype(int)
-        df['rank'] = df['着順'].map(lambda x:1 if x<4 else 0)
+        #df['着順'] = pd.to_numeric(df['着順'], errors='coerce')
+        #df.dropna(subset=['着順'], inplace=True)
+        #df['着順'] = df['着順'].astype(int)
+        #df['rank'] = df['着順'].map(lambda x:1 if x<4 else 0)
 
         # 性齢を性と年齢に分ける
         df["性"] = df["性齢"].map(lambda x: str(x)[0])
         df["年齢"] = df["性齢"].map(lambda x: str(x)[1:]).astype(int)
 
-        # 馬体重を体重と体重変化に分ける
-        df["体重"] = df["馬体重"].str.split("(", expand=True)[0]
-        df["体重変化"] = df["馬体重"].str.split("(", expand=True)[1].str[:-1]
+        # 情報開示前の場合
+        df["馬体重(増減)"].fillna('0(0)', inplace=True)
 
-        #errors='coerce'で、"計不"など変換できない時に欠損値にする
-        df['体重'] = pd.to_numeric(df['体重'], errors='coerce')
+        # 馬体重を体重と体重変化に分ける
+        df = df[df["馬体重(増減)"] != '--']
+        df["体重"] = df["馬体重(増減)"].str.split("(", expand=True)[0].astype(int)
+        df["体重変化"] = df["馬体重(増減)"].str.split("(", expand=True)[1].str[:-1]
+        # 2020/12/13追加：増減が「前計不」などのとき欠損値にする
         df['体重変化'] = pd.to_numeric(df['体重変化'], errors='coerce')
 
+        df["date"] = pd.to_datetime(df["date"])
+
+
         # 単勝をfloatに変換
-        df["単勝"] = df["単勝"].astype(float)
+        #df["単勝"] = df["単勝"].astype(float)
         # 距離は10の位を切り捨てる
         df["course_len"] = df["course_len"].astype(float) // 100
 
         # 不要な列を削除
-        df.drop(["タイム", "着差", "調教師", "性齢", "馬体重", '馬名', '騎手', '人気', '着順'],
+        df.drop(["性齢", '馬名', '騎手', '人気'],
                 axis=1, inplace=True)
 
         df["date"] = pd.to_datetime(df["date"], format="%Y年%m月%d日")
@@ -668,8 +301,7 @@ class ShutubaTable(DataProcessor):
             html = requests.get(url)
             html.encoding = "EUC-JP"
 
-            buffer = StringIO(html.text)
-            df = pd.read_html(buffer)[0]
+            df = pd.read_html(html.text)[0]
             # 列名に半角スペースがあれば除去する
             df = df.rename(columns=lambda x: x.replace(' ', ''))
             df = df.T.reset_index(level=0, drop=True).T
@@ -719,45 +351,42 @@ class ShutubaTable(DataProcessor):
 
     #前処理
     def preprocessing(self):
-        try:
-            df = self.data.copy()
+        df = self.data.copy()
 
-            df["性"] = df["性齢"].map(lambda x: str(x)[0])
-            df["年齢"] = df["性齢"].map(lambda x: str(x)[1:]).astype(int)
+        df["性"] = df["性齢"].map(lambda x: str(x)[0])
+        df["年齢"] = df["性齢"].map(lambda x: str(x)[1:]).astype(int)
 
-            # 馬体重を体重と体重変化に分ける
-            df = df[df["馬体重(増減)"] != '--']
-            df["体重"] = df["馬体重(増減)"].str.split("(", expand=True)[0].astype(int)
-            df["体重変化"] = df["馬体重(増減)"].str.split("(", expand=True)[1].str[:-1]
-            # 2020/12/13追加：増減が「前計不」などのとき欠損値にする
-            df['体重変化'] = pd.to_numeric(df['体重変化'], errors='coerce')
+        # 情報開示前の場合
+        df["馬体重(増減)"].fillna('0(0)', inplace=True)
 
-            df["date"] = pd.to_datetime(df["date"])
+        # 馬体重を体重と体重変化に分ける
+        df = df[df["馬体重(増減)"] != '--']
+        df["体重"] = df["馬体重(増減)"].str.split("(", expand=True)[0].astype(int)
+        df["体重変化"] = df["馬体重(増減)"].str.split("(", expand=True)[1].str[:-1]
+        # 2020/12/13追加：増減が「前計不」などのとき欠損値にする
+        df['体重変化'] = pd.to_numeric(df['体重変化'], errors='coerce')
 
-            df['枠'] = df['枠'].astype(int)
-            df['馬番'] = df['馬番'].astype(int)
-            df['斤量'] = df['斤量'].astype(int)
-            df['開催'] = df.index.map(lambda x:str(x)[4:6])
+        df["date"] = pd.to_datetime(df["date"])
 
-            #6/6出走数追加
-            df['n_horses'] = df.index.map(df.index.value_counts())
+        df['枠'] = df['枠'].astype(int)
+        df['馬番'] = df['馬番'].astype(int)
+        df['斤量'] = df['斤量'].astype(int)
+        df['開催'] = df.index.map(lambda x:str(x)[4:6])
 
-            # 距離は10の位を切り捨てる
-            df["course_len"] = df["course_len"].astype(float) // 100
+        #6/6出走数追加
+        df['n_horses'] = df.index.map(df.index.value_counts())
 
-            # 使用する列を選択
-            df = df[['枠', '馬番', '斤量', 'course_len', 'weather','race_type',
-            'ground_state', 'date', 'horse_id', 'jockey_id', '性', '年齢',
-        '体重', '体重変化', '開催', 'n_horses']]
+        # 距離は10の位を切り捨てる
+        df["course_len"] = df["course_len"].astype(float) // 100
 
-            self.data_p = df.rename(columns={'枠': '枠番'})
-        except KeyError as e:
-            st.write(f"エラーが発生しました: {e}")
-            st.write("存在する列名:")
-            st.write(self.data.columns)
+        # 使用する列を選択
+        df = df[['枠', '馬番', '斤量', 'course_len', 'weather','race_type',
+        'ground_state', 'date', 'horse_id', 'jockey_id', '性', '年齢',
+       '体重', '体重変化', '開催', 'n_horses']]
 
+        self.data_p = df.rename(columns={'枠': '枠番'})
 
-class HorseResults_2:
+class HorseResults:
     def __init__(self, horse_results):
         self.horse_results = horse_results[['日付', '着順', '賞金', '着差', '通過', '開催', '距離']]
         self.preprocessing()
@@ -905,17 +534,6 @@ class HorseResults_2:
         merged_df = pd.concat([self.merge(results, date, n_samples) for date in (date_list)])
         return merged_df
 
-#開催場所をidに変換するための辞書型
-place_dict = {
-    '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05',
-    '中山':'06',  '中京':'07',  '京都':'08',  '阪神':'09',  '小倉':'10'
-}
-
-#レースタイプをレース結果データと整合させるための辞書型
-race_type_dict = {
-    '芝': '芝', 'ダ': 'ダート', '障': '障害'
-}
-
 class Peds:
     def __init__(self, peds):
         self.peds = peds
@@ -928,38 +546,30 @@ class Peds:
             df = update_data(df, pd.read_pickle(path))
         return cls(df)
 
+
     @staticmethod
     def scrape(horse_id_list):
-        """
-        血統データをスクレイピングする関数
-
-        Parameters:
-        ----------
-        horse_id_list : list
-            馬IDのリスト
-
-        Returns:
-        ----------
-        peds_df : pandas.DataFrame
-            全血統データをまとめてDataFrame型にしたもの
-        """
-
         peds_dict = {}
+
+        # horse_id_listが空でないか確認
+        if len(horse_id_list) == 0:
+            print("No horse IDs to scrape.")
+            return pd.DataFrame()
+
         for horse_id in (horse_id_list):
             time.sleep(1)
             try:
                 url = "https://db.netkeiba.com/horse/ped/" + horse_id
                 df = pd.read_html(url)[0]
 
-                #重複を削除して1列のSeries型データに直す
                 generations = {}
                 for i in reversed(range(5)):
                     generations[i] = df[i]
                     df.drop([i], axis=1, inplace=True)
                     df = df.drop_duplicates()
                 ped = pd.concat([generations[i] for i in range(5)]).rename(horse_id)
-
                 peds_dict[horse_id] = ped.reset_index(drop=True)
+
             except IndexError:
                 continue
             except Exception as e:
@@ -968,10 +578,15 @@ class Peds:
             except:
                 break
 
-        #列名をpeds_0, ..., peds_61にする
+        if len(peds_dict) == 0:
+            print("No data to concatenate. Skipping...")
+            return pd.DataFrame()
+
         peds_df = pd.concat([peds_dict[key] for key in peds_dict], axis=1).T.add_prefix('peds_')
 
         return peds_df
+
+
 
     def encode(self):
         df = self.peds.copy()
@@ -979,493 +594,36 @@ class Peds:
             df[column] = LabelEncoder().fit_transform(df[column].fillna('Na'))
         self.peds_e = df.astype('category')
 
-class Return:
-    def __init__(self, return_tables):
-        self.return_tables = return_tables
-
-    @classmethod
-    def read_pickle(cls, path_list):
-        df = pd.read_pickle(path_list[0])
-        for path in path_list[1:]:
-            df = update_data(df, pd.read_pickle(path))
-        return cls(df)
-
-    @staticmethod
-    def scrape(race_id_list):
-        return_tables = {}
-        for race_id in (race_id_list):
-            time.sleep(1)
-            try:
-                url = "https://db.netkeiba.com/race/" + race_id
-
-                #普通にスクレイピングすると複勝やワイドなどが区切られないで繋がってしまう。
-                #そのため、改行コードを文字列brに変換して後でsplitする
-                f = urlopen(url)
-                html = f.read()
-                html = html.replace(b'<br />', b'br')
-                dfs = pd.read_html(html)
-
-                #dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-                df = pd.concat([dfs[1], dfs[2]])
-
-                df.index = [race_id] * len(df)
-                return_tables[race_id] = df
-            except IndexError:
-                continue
-            except AttributeError: #存在しないrace_idでAttributeErrorになるページもあるので追加
-                continue
-            except Exception as e:
-                print(e)
-                break
-            except:
-                break
-
-        #pd.DataFrame型にして一つのデータにまとめる
-        return_tables_df = pd.concat([return_tables[key] for key in return_tables])
-        return return_tables_df
-
-    @property
-    def fukusho(self):
-        fukusho = self.return_tables[self.return_tables[0]=='複勝'][[1,2]]
-        wins = fukusho[1].str.split('br', expand=True)[[0,1,2]]
-
-        wins.columns = ['win_0', 'win_1', 'win_2']
-        returns = fukusho[2].str.split('br', expand=True)[[0,1,2]]
-        returns.columns = ['return_0', 'return_1', 'return_2']
-
-        df = pd.concat([wins, returns], axis=1)
-        for column in df.columns:
-            df[column] = df[column].str.replace(',', '')
-        return df.fillna(0).astype(int)
-
-    @property
-    def tansho(self):
-        tansho = self.return_tables[self.return_tables[0]=='単勝'][[1,2]]
-        tansho.columns = ['win', 'return']
-
-        for column in tansho.columns:
-            tansho[column] = pd.to_numeric(tansho[column], errors='coerce')
-
-        return tansho
-
-    @property
-    def umaren(self):
-        umaren = self.return_tables[self.return_tables[0]=='馬連'][[1,2]]
-        wins = umaren[1].str.split('-', expand=True)[[0,1]].add_prefix('win_')
-        return_ = umaren[2].rename('return')
-        df = pd.concat([wins, return_], axis=1)
-        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-
-    @property
-    def umatan(self):
-        umatan = self.return_tables[self.return_tables[0]=='馬単'][[1,2]]
-        wins = umatan[1].str.split('→', expand=True)[[0,1]].add_prefix('win_')
-        return_ = umatan[2].rename('return')
-        df = pd.concat([wins, return_], axis=1)
-        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-
-    @property
-    def wide(self):
-        wide = self.return_tables[self.return_tables[0]=='ワイド'][[1,2]]
-        wins = wide[1].str.split('br', expand=True)[[0,1,2]]
-        wins = wins.stack().str.split('-', expand=True).add_prefix('win_')
-        return_ = wide[2].str.split('br', expand=True)[[0,1,2]]
-        return_ = return_.stack().rename('return')
-        df = pd.concat([wins, return_], axis=1)
-        return df.apply(lambda x: pd.to_numeric(x.str.replace(',',''), errors='coerce'))
-
-    @property
-    def sanrentan(self):
-        rentan = self.return_tables[self.return_tables[0]=='三連単'][[1,2]]
-        wins = rentan[1].str.split('→', expand=True)[[0,1,2]].add_prefix('win_')
-        return_ = rentan[2].rename('return')
-        df = pd.concat([wins, return_], axis=1)
-        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-
-    @property
-    def sanrenpuku(self):
-        renpuku = self.return_tables[self.return_tables[0]=='三連複'][[1,2]]
-        wins = renpuku[1].str.split('-', expand=True)[[0,1,2]].add_prefix('win_')
-        return_ = renpuku[2].rename('return')
-        df = pd.concat([wins, return_], axis=1)
-        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-
-class ModelEvaluator:
-    def __init__(self, model, return_tables_path_list):
-        self.model = model
-        self.rt = Return.read_pickle(return_tables_path_list)
-        self.fukusho = self.rt.fukusho
-        self.tansho = self.rt.tansho
-        self.umaren = self.rt.umaren
-        self.umatan = self.rt.umatan
-        self.wide = self.rt.wide
-        self.sanrentan = self.rt.sanrentan
-        self.sanrenpuku = self.rt.sanrenpuku
-
-    #3着以内に入る確率を予測
-    def predict_proba(self, X, train=True, std=True, minmax=False):
-        if train:
-            proba = pd.Series(
-                self.model.predict_proba(X.drop(['単勝'], axis=1))[:, 1], index=X.index
-            )
-        else:
-            proba = pd.Series(
-                self.model.predict_proba(X, axis=1)[:, 1], index=X.index
-            )
-        if std:
-            #レース内で標準化して、相対評価する。「レース内偏差値」みたいなもの。
-            standard_scaler = lambda x: (x - x.mean()) / x.std(ddof=0)
-            proba = proba.groupby(level=0).transform(standard_scaler)
-        if minmax:
-            #データ全体を0~1にする
-            proba = (proba - proba.min()) / (proba.max() - proba.min())
-        return proba
-
-    #0か1かを予測
-    def predict(self, X, threshold=0.5):
-        y_pred = self.predict_proba(X)
-        self.proba = y_pred
-        return [0 if p<threshold else 1 for p in y_pred]
-
-    def score(self, y_true, X):
-        return roc_auc_score(y_true, self.predict_proba(X))
-
-    def feature_importance(self, X, n_display=20):
-        importances = pd.DataFrame({"features": X.columns,
-                                    "importance": self.model.feature_importances_})
-        return importances.sort_values("importance", ascending=False)[:n_display]
-
-    def pred_table(self, X, threshold=0.5, bet_only=True):
-        pred_table = X.copy()[['馬番', '単勝']]
-        pred_table['pred'] = self.predict(X, threshold)
-        pred_table['score'] = self.proba
-        if bet_only:
-            return pred_table[pred_table['pred']==1][['馬番', '単勝', 'score']]
-        else:
-            return pred_table[['馬番', '単勝', 'score', 'pred']]
-
-    def bet(self, race_id, kind, umaban, amount):
-        if kind == 'fukusho':
-            rt_1R = self.fukusho.loc[race_id]
-            return_ = (rt_1R[['win_0', 'win_1', 'win_2']]==umaban).values * \
-                rt_1R[['return_0', 'return_1', 'return_2']].values * amount/100
-            return_ = np.sum(return_)
-        if kind == 'tansho':
-            rt_1R = self.tansho.loc[race_id]
-            return_ = (rt_1R['win']==umaban) * rt_1R['return'] * amount/100
-        if kind == 'umaren':
-            rt_1R = self.umaren.loc[race_id]
-            return_ = (set(rt_1R[['win_0', 'win_1']]) == set(umaban)) \
-                * rt_1R['return']/100 * amount
-        if kind == 'umatan':
-            rt_1R = self.umatan.loc[race_id]
-            return_ = (list(rt_1R[['win_0', 'win_1']]) == list(umaban))\
-                * rt_1R['return']/100 * amount
-        if kind == 'wide':
-            rt_1R = self.wide.loc[race_id]
-            return_ = (rt_1R[['win_0', 'win_1']].\
-                           apply(lambda x: set(x)==set(umaban), axis=1)) \
-                * rt_1R['return']/100 * amount
-            return_ = return_.sum()
-        if kind == 'sanrentan':
-            rt_1R = self.sanrentan.loc[race_id]
-            return_ = (list(rt_1R[['win_0', 'win_1', 'win_2']]) == list(umaban)) * \
-                rt_1R['return']/100 * amount
-        if kind == 'sanrenpuku':
-            rt_1R = self.sanrenpuku.loc[race_id]
-            return_ = (set(rt_1R[['win_0', 'win_1', 'win_2']]) == set(umaban)) \
-                * rt_1R['return']/100 * amount
-        if not (return_ >= 0):
-                return_ = amount
-        return return_
-
-    def fukusho_return(self, X, threshold=0.5):
-        pred_table = self.pred_table(X, threshold)
-        n_bets = len(pred_table)
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_list.append(np.sum([
-                self.bet(race_id, 'fukusho', umaban, 1) for umaban in preds['馬番']
-            ]))
-        return_rate = np.sum(return_list) / n_bets
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-        n_hits = np.sum([x>0 for x in return_list])
-        return n_bets, return_rate, n_hits, std
-
-    def tansho_return(self, X, threshold=0.5):
-        pred_table = self.pred_table(X, threshold)
-        self.sample = pred_table
-        n_bets = len(pred_table)
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_list.append(
-                np.sum([self.bet(race_id, 'tansho', umaban, 1) for umaban in preds['馬番']])
-            )
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def tansho_return_proper(self, X, threshold=0.5):
-        pred_table = self.pred_table(X, threshold)
-        n_bets = len(pred_table)
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_list.append(
-                np.sum(preds.apply(lambda x: self.bet(
-                    race_id, 'tansho', x['馬番'], 1/x['単勝']), axis=1)))
-
-        bet_money = (1 / pred_table['単勝']).sum()
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / bet_money
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / bet_money
-        return n_bets, return_rate, n_hits, std
-
-    def umaren_box(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                continue
-            elif len(preds_jiku) >= 2:
-                for umaban in combinations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'umaren', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def umatan_box(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                continue
-            elif len(preds_jiku) >= 2:
-                for umaban in permutations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'umatan', umaban, 1)
-                    n_bets += 1
-            return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def wide_box(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                continue
-            elif len(preds_jiku) >= 2:
-                for umaban in combinations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'wide', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def sanrentan_box(self, X, threshold=0.5):
-        pred_table = self.pred_table(X, threshold)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            if len(preds)<3:
-                continue
-            else:
-                for umaban in permutations(preds['馬番'], 3):
-                    return_ += self.bet(race_id, 'sanrentan', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def sanrenpuku_box(self, X, threshold=0.5):
-        pred_table = self.pred_table(X, threshold)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            if len(preds)<3:
-                continue
-            else:
-                for umaban in combinations(preds['馬番'], 3):
-                    return_ += self.bet(race_id, 'sanrenpuku', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def umaren_nagashi(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                preds_aite = preds.sort_values('score', ascending = False)\
-                    .iloc[1:(n_aite+1)]['馬番']
-                return_ = preds_aite.map(
-                    lambda x: self.bet(
-                        race_id, 'umaren', [preds_jiku['馬番'].values[0], x], 1
-                    )
-                ).sum()
-                n_bets += n_aite
-                return_list.append(return_)
-            elif len(preds_jiku) >= 2:
-                for umaban in combinations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'umaren', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def umatan_nagashi(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                preds_aite = preds.sort_values('score', ascending = False)\
-                    .iloc[1:(n_aite+1)]['馬番']
-                return_ = preds_aite.map(
-                    lambda x: self.bet(
-                        race_id, 'umatan', [preds_jiku['馬番'].values[0], x], 1
-                    )
-                ).sum()
-                n_bets += n_aite
-
-            elif len(preds_jiku) >= 2:
-                for umaban in permutations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'umatan', umaban, 1)
-                    n_bets += 1
-            return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def wide_nagashi(self, X, threshold=0.5, n_aite=5):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            return_ = 0
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                preds_aite = preds.sort_values('score', ascending = False)\
-                    .iloc[1:(n_aite+1)]['馬番']
-                return_ = preds_aite.map(
-                    lambda x: self.bet(
-                        race_id, 'wide', [preds_jiku['馬番'].values[0], x], 1
-                    )
-                ).sum()
-                n_bets += len(preds_aite)
-                return_list.append(return_)
-            elif len(preds_jiku) >= 2:
-                for umaban in combinations(preds_jiku['馬番'], 2):
-                    return_ += self.bet(race_id, 'wide', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-    def sanrentan_nagashi(self, X, threshold = 1.5, n_aite=7):
-        pred_table = self.pred_table(X, threshold, bet_only = False)
-        n_bets = 0
-        return_list = []
-        for race_id, preds in pred_table.groupby(level=0):
-            preds_jiku = preds.query('pred == 1')
-            if len(preds_jiku) == 1:
-                continue
-            elif len(preds_jiku) == 2:
-                preds_aite = preds.sort_values('score', ascending = False)\
-                    .iloc[2:(n_aite+2)]['馬番']
-                return_ = preds_aite.map(
-                    lambda x: self.bet(
-                        race_id, 'sanrentan',
-                        np.append(preds_jiku['馬番'].values, x),
-                        1
-                    )
-                ).sum()
-                n_bets += len(preds_aite)
-                return_list.append(return_)
-            elif len(preds_jiku) >= 3:
-                return_ = 0
-                for umaban in permutations(preds_jiku['馬番'], 3):
-                    return_ += self.bet(race_id, 'sanrentan', umaban, 1)
-                    n_bets += 1
-                return_list.append(return_)
-
-        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
-
-        n_hits = np.sum([x>0 for x in return_list])
-        return_rate = np.sum(return_list) / n_bets
-        return n_bets, return_rate, n_hits, std
-
-
+        
+#開催場所をidに変換するための辞書型
+place_dict = {
+    '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05',
+    '中山':'06',  '中京':'07',  '京都':'08',  '阪神':'09',  '小倉':'10'
+}
+
+#レースタイプをレース結果データと整合させるための辞書型
+race_type_dict = {
+    '芝': '芝', 'ダ': 'ダート', '障': '障害'
+}
 
 
 
 # データをロードする関数
-def load_data(race_id):
-    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+def update_data(old, new):
+    """
+    Parameters:
+    ----------
+    old : pandas.DataFrame
+        古いデータ
+    new : pandas.DataFrame
+        新しいデータ
+    """
+
+    filtered_old = old[~old.index.isin(new.index)]
+    return pd.concat([filtered_old, new])
+
+def load_data(base_race_id):
+    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={base_race_id}"
     html = requests.get(url)
     html.encoding = "EUC-JP"
 
@@ -1477,19 +635,13 @@ def load_data(race_id):
         column_names = ['枠', '馬 番', '印', '馬名', '性齢', '斤量', '騎手', '厩舎', '馬体重 (増減)', '予想オッズ', '人気', '登録', 'メモ']
         df.columns = column_names
         df.drop(['印', '登録', 'メモ', '予想オッズ', '人気'], axis=1, inplace=True)
-
-        # 新しい列 'AI予想' を先頭に追加
-        df.insert(0, 'AI予想', None)  # 0は挿入位置、'AI予想'は列名、Noneは初期値
-        df['race_id'] = race_id
         return df
     except Exception as e:
         st.write(f"エラーが発生しました: {e}")
         return None
 
-from bs4 import BeautifulSoup
-
-def load_additional_data(race_id):
-    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+def load_additional_data(base_race_id):
+    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={base_race_id}"
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -1513,167 +665,362 @@ def load_additional_data(race_id):
         st.write(f"追加データの取得中にエラーが発生しました: {e}")
         return None
 
+def generate_column_names():
+    column_names = ['枠番',
+ '馬番',
+ '斤量',
+ 'course_len',
+ 'horse_id',
+ 'jockey_id',
+ '年齢',
+ '体重',
+ '体重変化',
+ 'n_horses',
+ '着順_5R',
+ '賞金_5R',
+ '着差_5R',
+ 'first_corner_5R',
+ 'final_corner_5R',
+ 'first_to_rank_5R',
+ 'first_to_final_5R',
+ 'final_to_rank_5R',
+ '着順_course_len_5R',
+ '賞金_course_len_5R',
+ '着差_course_len_5R',
+ 'first_corner_course_len_5R',
+ 'final_corner_course_len_5R',
+ 'first_to_rank_course_len_5R',
+ 'first_to_final_course_len_5R',
+ 'final_to_rank_course_len_5R',
+ '着順_race_type_5R',
+ '賞金_race_type_5R',
+ '着差_race_type_5R',
+ 'first_corner_race_type_5R',
+ 'final_corner_race_type_5R',
+ 'first_to_rank_race_type_5R',
+ 'first_to_final_race_type_5R',
+ 'final_to_rank_race_type_5R',
+ '着順_開催_5R',
+ '賞金_開催_5R',
+ '着差_開催_5R',
+ 'first_corner_開催_5R',
+ 'final_corner_開催_5R',
+ 'first_to_rank_開催_5R',
+ 'first_to_final_開催_5R',
+ 'final_to_rank_開催_5R',
+ '着順_9R',
+ '賞金_9R',
+ '着差_9R',
+ 'first_corner_9R',
+ 'final_corner_9R',
+ 'first_to_rank_9R',
+ 'first_to_final_9R',
+ 'final_to_rank_9R',
+ '着順_course_len_9R',
+ '賞金_course_len_9R',
+ '着差_course_len_9R',
+ 'first_corner_course_len_9R',
+ 'final_corner_course_len_9R',
+ 'first_to_rank_course_len_9R',
+ 'first_to_final_course_len_9R',
+ 'final_to_rank_course_len_9R',
+ '着順_race_type_9R',
+ '賞金_race_type_9R',
+ '着差_race_type_9R',
+ 'first_corner_race_type_9R',
+ 'final_corner_race_type_9R',
+ 'first_to_rank_race_type_9R',
+ 'first_to_final_race_type_9R',
+ 'final_to_rank_race_type_9R',
+ '着順_開催_9R',
+ '賞金_開催_9R',
+ '着差_開催_9R',
+ 'first_corner_開催_9R',
+ 'final_corner_開催_9R',
+ 'first_to_rank_開催_9R',
+ 'first_to_final_開催_9R',
+ 'final_to_rank_開催_9R',
+ '着順_allR',
+ '賞金_allR',
+ '着差_allR',
+ 'first_corner_allR',
+ 'final_corner_allR',
+ 'first_to_rank_allR',
+ 'first_to_final_allR',
+ 'final_to_rank_allR',
+ '着順_course_len_allR',
+ '賞金_course_len_allR',
+ '着差_course_len_allR',
+ 'first_corner_course_len_allR',
+ 'final_corner_course_len_allR',
+ 'first_to_rank_course_len_allR',
+ 'first_to_final_course_len_allR',
+ 'final_to_rank_course_len_allR',
+ '着順_race_type_allR',
+ '賞金_race_type_allR',
+ '着差_race_type_allR',
+ 'first_corner_race_type_allR',
+ 'final_corner_race_type_allR',
+ 'first_to_rank_race_type_allR',
+ 'first_to_final_race_type_allR',
+ 'final_to_rank_race_type_allR',
+ '着順_開催_allR',
+ '賞金_開催_allR',
+ '着差_開催_allR',
+ 'first_corner_開催_allR',
+ 'final_corner_開催_allR',
+ 'first_to_rank_開催_allR',
+ 'first_to_final_開催_allR',
+ 'final_to_rank_開催_allR',
+ 'interval',
+ 'peds_0',
+ 'peds_1',
+ 'peds_2',
+ 'peds_3',
+ 'peds_4',
+ 'peds_5',
+ 'peds_6',
+ 'peds_7',
+ 'peds_8',
+ 'peds_9',
+ 'peds_10',
+ 'peds_11',
+ 'peds_12',
+ 'peds_13',
+ 'peds_14',
+ 'peds_15',
+ 'peds_16',
+ 'peds_17',
+ 'peds_18',
+ 'peds_19',
+ 'peds_20',
+ 'peds_21',
+ 'peds_22',
+ 'peds_23',
+ 'peds_24',
+ 'peds_25',
+ 'peds_26',
+ 'peds_27',
+ 'peds_28',
+ 'peds_29',
+ 'peds_30',
+ 'peds_31',
+ 'peds_32',
+ 'peds_33',
+ 'peds_34',
+ 'peds_35',
+ 'peds_36',
+ 'peds_37',
+ 'peds_38',
+ 'peds_39',
+ 'peds_40',
+ 'peds_41',
+ 'peds_42',
+ 'peds_43',
+ 'peds_44',
+ 'peds_45',
+ 'peds_46',
+ 'peds_47',
+ 'peds_48',
+ 'peds_49',
+ 'peds_50',
+ 'peds_51',
+ 'peds_52',
+ 'peds_53',
+ 'peds_54',
+ 'peds_55',
+ 'peds_56',
+ 'peds_57',
+ 'peds_58',
+ 'peds_59',
+ 'peds_60',
+ 'peds_61',
+ 'weather_晴',
+ 'weather_曇',
+ 'weather_雨',
+ 'weather_小雨',
+ 'weather_小雪',
+ 'weather_雪',
+ 'race_type_芝',
+ 'race_type_ダート',
+ 'race_type_障害',
+ 'ground_state_良',
+ 'ground_state_稍重',
+ 'ground_state_重',
+ 'ground_state_不良',
+ '性_牝',
+ '性_牡',
+ '性_セ']
+    return column_names
+
 
 # Streamlit UI
 st.title("競馬AI予想🐎")
-day_options = ["1日目", "2日目", "3日目"]
-selected_day = st.selectbox("何日目か選択してください", day_options)
-day_number = int(selected_day[0])
+
+# 現在の日付をデフォルトとして設定
+today = datetime.date.today()
+# date_input ウィジェットで日付を選択
+selected_date = st.date_input("開催日を選択してください", today)
+# 選択された日付を YYYY/MM/DD 形式で表示
+formatted_date = selected_date.strftime("%Y/%m/%d")
 
 racecourse_map = {
-    "札幌": "01",
-    "函館": "02",
-    "福島": "03",
-    "新潟": "04",
-    "東京": "05",
-    "中山": "06",
-    "中京": "07",
-    "京都": "08",
-    "阪神": "09",
-    "小倉": "10"
+    "札幌_01": "01",
+    "函館_02": "02",
+    "福島_03": "03",
+    "新潟_04": "04",
+    "東京_05": "05",
+    "中山_06": "06",
+    "中京_07": "07",
+    "京都_08": "08",
+    "阪神_09": "09",
+    "小倉_10": "10"
 }
 
 racecourse = st.selectbox("競馬場を選択してください", list(racecourse_map.keys()))
 holding_number = st.selectbox("開催回数を選択してください", list(range(1, 12)))
 
-base_race_id = f"2023{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}"
-st.write(f"生成されたbase_race_idは {base_race_id} です。")
-st.write(f"サンプルは「第1回札幌競馬場1日目1レース」の3位以内に入る確率を、機械学習にて予測しております。")
+day_options = ["1日目", "2日目", "3日目", "4日目", "5日目", "6日目", "7日目", "8日目", "9日目", "10日目"]
+selected_day = st.selectbox("何日目か選択してください", day_options)
+day_number = int(selected_day[0])
+
+race_number = st.selectbox("何レースかを選択してください", list(range(1, 12)))
 
 
 
-sample = pd.read_pickle('sample.pickle')
+base_race_id = f"2023{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}{race_number:02d}"
+
+
+st.write(f"選択された日付は {formatted_date} です")
+st.write(f"RACE_IDは {base_race_id} です。")
+
+
+# データをロード
+df = load_data(base_race_id)
+additional_data = load_additional_data(base_race_id)
+
+if additional_data:
+    st.write(f"レース名: {additional_data['race_name']}")
+
+
+# DataFrameを表示
+if df is not None:
+    st.table(df)
+else:
+    st.write('データをロードできませんでした。')
 
 
 
 
 
-#時系列に沿って訓練データとテストデータに分ける関数
-def split_data(df, test_size=0.3):
-    sorted_id_list = df.sort_values("date").index.unique()
-    train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
-    test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
-    train = df.loc[train_id_list]
-    test = df.loc[test_id_list]
-    return train, test
-
-sample = sample.drop(['rank', 'date', '単勝'], axis=1)
-
-# 追加したい列名のリスト
-columns_to_add = ['weather_雪', 'weather_小雪', 'ground_state_重', 'weather_小雨', 'weather_曇', 'weather_雨', 'race_type_障害', 'ground_state_稍重', 'ground_state_不良']
-
-# データフレームに存在しない列名だけを追加
-for col in columns_to_add:
-    if col not in sample.columns:
-        sample[col] = 0  # 数値の0を入れる
-
-# LightGBMモデルを読み込む
-lgb_clf = lgb.Booster(model_file="lgb_model.txt")
-
-# 予測を実施
-predictions = lgb_clf.predict(sample)
-
-# 予測結果をdata_cに追加
-sample['Predicted_Rank'] = predictions
-
-# 予測結果を降順にソート
-sorted_predictions = sample.sort_values(by=['Predicted_Rank'], ascending=False)
-
-# TOP3の予測結果を抽出
-top_3_per_race = sample.groupby(level=0).apply(lambda x: x.nlargest(3, 'Predicted_Rank'))
-
-# 各レースごとに出馬表とTOP3を表示
-for race_id, group_data in sorted_predictions.groupby(level=0):
-
-    # df（出馬表）を対応するrace_idで更新する
-    df = load_data(race_id)
-
-    if df is not None:
-        # race_idと馬番が一致する行の'AI予想'列にPredicted_Rankの値を挿入
-        for _, row in group_data.iterrows():
-            horse_number = row['馬番']
-            predicted_rank = row['Predicted_Rank']
-            df.loc[df['馬 番'] == horse_number, 'AI予想'] = predicted_rank
-
-        # 追加の情報とともに出馬表を表示
-        additional_data = load_additional_data(race_id)
-        if additional_data:
-            st.markdown(f"**サンプル:** {additional_data['race_name']}")
 
 
-        st.dataframe(df)
-
-    # そのレースのTOP3予測を表示
-    if race_id in top_3_per_race.index.levels[0]:
-        top_3_data = top_3_per_race.loc[race_id]
-        st.dataframe(top_3_data[['馬番', 'Predicted_Rank']])
-    break
 
 
 if st.button('AI予想'):
     st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
+    #race_id_list の生成
+    #race_id_list = [f"{base_race_id}{str(i).zfill(2)}" for i in range(1, 13)]
+    race_id_list = [base_race_id]
+    sta = ShutubaTable.scrape(race_id_list, formatted_date)
+    sta.data = sta.data.rename(columns=lambda x: x.replace(' ', ''))
+    
+    #前処理
+    sta.preprocessing()
 
-    # race_id_list の生成
-    race_id_list = [f"{base_race_id}{str(i).zfill(2)}" for i in range(1, 13)]
-
-
-    # Results クラスの scrape メソッドを使用
-    results = Results_1.scrape(race_id_list)
-    results = results.rename(columns=lambda x: x.replace(' ', ''))
-    st.write("出馬表: ", results)
-    race_id_list = results.index.unique()
-
-    #return_tables = Return.scrape(race_id_list)
-    horse_id_list = results['horse_id'].unique()
-    horse_results = HorseResults_1.scrape(horse_id_list)
+    horse_id_list = sta.data_p['horse_id'].unique()
+    horse_results = HorseResults.scrape(horse_id_list)
     horse_results = horse_results.rename(columns=lambda x: x.replace(' ', ''))
     st.write("出走馬の過去成績情報: ", horse_results)
+    #馬の過去成績データ追加
+    hr = HorseResults(horse_results)
+    #馬の過去成績データの追加。新馬はNaNが追加される
+    sta.merge_horse_results(hr)
 
     peds = Peds.scrape(horse_id_list)
     st.write("出走馬の血統情報: ", peds)
 
-    #Resultsクラスのオブジェクト作成
-    r = Results_2(results)
-    #前処理
-    r.preprocessing()
-
-    #馬の過去成績データ追加
-    hr = HorseResults_2(horse_results)
-    r.merge_horse_results(hr)
-
-    #血統データ追加
     p = Peds(peds)
     p.encode()
-    r.merge_horse_results(hr, n_samples_list=[5, 9, 'all'])
-    r.merge_peds(p.peds_e)
-    r.process_categorical()
+
+    sta.merge_horse_results(hr, n_samples_list=[5, 9, 'all'])
+
+    #5世代分の血統データの追加
+    sta.merge_peds(p.peds_e)
+
+    data_pe = sta.data_pe
+
+    # 1. LabelEncoderオブジェクトを初期化
+    le_horse = LabelEncoder().fit(data_pe['horse_id'])
+    le_jockey = LabelEncoder().fit(data_pe['jockey_id'])
+
+    # 2. ラベルエンコーディング
+    data_pe['horse_id'] = le_horse.transform(data_pe['horse_id'])
+    data_pe['jockey_id'] = le_jockey.transform(data_pe['jockey_id'])
+
+    # 3. pandasのcategory型に変換
+    data_pe['horse_id'] = data_pe['horse_id'].astype('category')
+    data_pe['jockey_id'] = data_pe['jockey_id'].astype('category')
+
+    # 4. ダミー変数化
+    weathers = data_pe['weather'].unique()
+    race_types = data_pe['race_type'].unique()
+    ground_states = data_pe['ground_state'].unique()
+    sexes = data_pe['性'].unique()
+
+    data_pe['weather'] = pd.Categorical(data_pe['weather'], weathers)
+    data_pe['race_type'] = pd.Categorical(data_pe['race_type'], race_types)
+    data_pe['ground_state'] = pd.Categorical(data_pe['ground_state'], ground_states)
+    data_pe['性'] = pd.Categorical(data_pe['性'], sexes)
+
+    data_pe = pd.get_dummies(data_pe, columns=['weather', 'race_type', 'ground_state', '性'])
+
+    st.write("5世代分の血統データの追加: ", data_pe)
+
+
+
+
+
+
+
+
+
+
 
 
     # LightGBMモデルを読み込む
-    #lgb_clf = lgb.Booster(model_file="/Users/yamanekousaku/Desktop/競馬予想AI/機械学習モデル/lgb_model.txt")
+    lgb_clf = lgb.Booster(model_file="lgb_model.txt")
 
-    # 以下は既存のStreamlitアプリのコード
-    # ...
+    data_c = data_pe.drop(['date'], axis=1)
 
-    #時系列に沿って訓練データとテストデータに分ける関数
-    def split_data(df, test_size=0.3):
-        sorted_id_list = df.sort_values("date").index.unique()
-        train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
-        test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
-        train = df.loc[train_id_list]
-        test = df.loc[test_id_list]
-        return train, test
-
-    data_c =  r.data_c.drop(['rank', 'date', '単勝'], axis=1)
 
     # 追加したい列名のリスト
-    columns_to_add = ['weather_雪', 'weather_小雪', 'ground_state_重', 'weather_小雨', 'weather_曇', 'weather_雨', 'race_type_障害', 'ground_state_稍重', 'ground_state_不良']
-
+    columns_to_add = ['ground_state_稍重', 'weather_雪', 'weather_小雨', 'ground_state_不良', 'weather_小雪', 'weather_雨', 'weather_曇', 'ground_state_重', 'race_type_障害', 'weather_晴', 'race_type_芝', 'race_type_ダート', 'ground_state_良', '性_牡', '性_牝', '性_セ']
     # データフレームに存在しない列名だけを追加
     for col in columns_to_add:
         if col not in data_c.columns:
             data_c[col] = 0  # 数値の0を入れる
+
+    my_column_names = generate_column_names()
+
+    # 訓練時に使用された特徴量の名前を取得
+    train_features = my_column_names
+
+    # 予測データの特徴量の名前を取得
+    test_features = data_c.columns.tolist()
+
+    # 訓練データにはあるが、予測データにはない特徴量を見つける
+    missing_features = set(train_features) - set(test_features)
+
+    # 不足している特徴量に0を割り当てる
+    for feature in missing_features:
+        data_c[feature] = 0
+
+
+
+
+
 
     # 予測を実施
     predictions = lgb_clf.predict(data_c)
@@ -1694,6 +1041,10 @@ if st.button('AI予想'):
         df = load_data(race_id)
 
         if df is not None:
+            # 先頭に'AI予想'列を追加（すでに存在している場合はそのまま）
+            if 'AI予想' not in df.columns:
+                df.insert(0, 'AI予想', None)
+
             # race_idと馬番が一致する行の'AI予想'列にPredicted_Rankの値を挿入
             for _, row in group_data.iterrows():
                 horse_number = row['馬番']
@@ -1711,3 +1062,4 @@ if st.button('AI予想'):
         if race_id in top_3_per_race.index.levels[0]:
             top_3_data = top_3_per_race.loc[race_id]
             st.dataframe(top_3_data[['馬番', 'Predicted_Rank']])
+
