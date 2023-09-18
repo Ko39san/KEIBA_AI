@@ -15,7 +15,7 @@ import optuna.integration.lightgbm as lgb_o
 from itertools import combinations, permutations
 import matplotlib.pyplot as plt
 from io import StringIO
-import datetime
+from datetime import datetime
 
 
 
@@ -648,21 +648,38 @@ def load_additional_data(base_race_id):
         race_name_div = soup.find('div', class_='RaceName')
         race_name = race_name_div.text.strip()
 
-        # Icon_GradeType13 クラスを持つ span タグが存在するか確認
         if race_name_div.find('span', class_='Icon_GradeType13'):
             race_name += '_win5'
 
         race_data01 = soup.find('div', class_='RaceData01').text.strip()
         race_data02 = soup.find('div', class_='RaceData02').text.strip().replace('\xa0', ' ')
 
+        # 日付情報を取得
+        date_list = soup.find('dl', {'id': 'RaceList_DateList'})
+        active_date = date_list.find('dd', {'class': 'Active'}) if date_list else None
+
+        if active_date:
+            race_date_jp = active_date.find('a')['title']
+
+        # 曜日の情報を削除（例： "9月16日(土)" -> "9月16日"）
+            race_date_jp_clean = race_date_jp.split('(')[0]
+
+            race_date_dt = datetime.strptime(f"{year}年{race_date_jp_clean}", '%Y年%m月%d日')
+            race_date = race_date_dt.strftime('%Y/%m/%d')
+        else:
+            race_date = '不明'
+
         return {
             'race_name': race_name,
             'race_data01': race_data01,
-            'race_data02': race_data02
+            'race_data02': race_data02,
+            'race_date': race_date  # 追加
         }
+
     except Exception as e:
         st.write(f"追加データの取得中にエラーが発生しました: {e}")
         return None
+
 
 def generate_column_names():
     column_names = ['枠番',
@@ -856,12 +873,16 @@ def generate_column_names():
 # Streamlit UI
 st.title("競馬AI予想🐎")
 
+years = list(reversed(range(2014, 2024)))
+year = st.selectbox('年を選択してください', years)
+
+
 # 現在の日付をデフォルトとして設定
-today = datetime.date.today()
+#today = datetime.date.today()
 # date_input ウィジェットで日付を選択
-selected_date = st.date_input("開催日を選択してください", today)
+#selected_date = st.date_input("開催日を選択してください", today)
 # 選択された日付を YYYY/MM/DD 形式で表示
-formatted_date = selected_date.strftime("%Y/%m/%d")
+#formatted_date = selected_date.strftime("%Y/%m/%d")
 
 racecourse_map = {
     "札幌_01": "01",
@@ -887,10 +908,11 @@ race_number = st.selectbox("何レースかを選択してください", list(ra
 
 
 
-base_race_id = f"2023{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}{race_number:02d}"
+base_race_id = f"{year}{racecourse_map[racecourse]}{holding_number:02d}{day_number:02d}{race_number:02d}"
 
 
-st.write(f"選択された日付は {formatted_date} です")
+
+#st.write(f"選択された日付は {race_data} です")
 st.write(f"RACE_IDは {base_race_id} です。")
 
 
@@ -899,8 +921,10 @@ df = load_data(base_race_id)
 additional_data = load_additional_data(base_race_id)
 
 if additional_data:
+    # 日付情報を取得
+    st.write(f"開催日： {additional_data['race_date']}")  
     st.write(f"レース名: {additional_data['race_name']}")
-
+    
 
 # DataFrameを表示
 if df is not None:
@@ -909,7 +933,8 @@ else:
     st.write('データをロードできませんでした。')
 
 
-
+additional_data = load_additional_data(base_race_id)
+race_date = additional_data['race_date'] if additional_data else None
 
 
 
@@ -919,7 +944,7 @@ if st.button('AI予想'):
     #race_id_list の生成
     #race_id_list = [f"{2023010101}{str(i).zfill(2)}" for i in range(1, 13)]
     race_id_list = [base_race_id]
-    sta = ShutubaTable.scrape(race_id_list, formatted_date)
+    sta = ShutubaTable.scrape(race_id_list, race_date)
     sta.data = sta.data.rename(columns=lambda x: x.replace(' ', ''))
     horse_id_list = sta.data['horse_id'].unique()
     #前処理
