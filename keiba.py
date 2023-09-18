@@ -874,7 +874,7 @@ def generate_column_names():
 st.title("競馬AI予想🐎")
 
 years = list(reversed(range(2014, 2024)))
-year = st.selectbox('年を選択してください', years)
+year = st.selectbox('開催年を選択してください', years)
 
 
 # 現在の日付をデフォルトとして設定
@@ -949,7 +949,7 @@ if st.button('AI予想'):
     horse_id_list = sta.data['horse_id'].unique()
     #前処理
     sta.preprocessing()
-    st.write("出馬表: ", sta.data)
+    #st.write("出馬表: ", sta.data)
     
     horse_results = HorseResults.scrape(horse_id_list)
     
