@@ -17,6 +17,8 @@ import matplotlib.pyplot as plt
 from io import StringIO
 import datetime
 
+
+
 class DataProcessor:
     """
     Attributes:
@@ -400,6 +402,9 @@ class HorseResults:
             df = update_data(df, pd.read_pickle(path))
         return cls(df)
 
+
+
+
     @staticmethod
     def scrape(horse_id_list):
         horse_results = {}
@@ -407,7 +412,10 @@ class HorseResults:
             time.sleep(1)
             try:
                 url = 'https://db.netkeiba.com/horse/' + horse_id
-                df = pd.read_html(url)[3]
+                res = requests.get(url)
+                res.encoding = 'EUC-JP'  # またはサイトに合わせたエンコーディング
+                df = pd.read_html(res.text)[3]
+            
                 if df.columns[0]=='受賞歴':
                     df = pd.read_html(url)[4]
                 df.index = [horse_id] * len(df)
@@ -422,11 +430,6 @@ class HorseResults:
         if not horse_results:
             st.error("horse_results is empty")
             return
-
-        horse_results_df = pd.concat([horse_results[key] for key in horse_results])
-
-        return horse_results_df
-
 
         #pd.DataFrame型にして一つのデータにまとめる
         horse_results_df = pd.concat([horse_results[key] for key in horse_results])
