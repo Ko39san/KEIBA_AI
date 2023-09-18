@@ -915,8 +915,8 @@ if st.button('AI予想'):
     st.write('AI予想を開始致します。処理には15分〜20分かかります。')
 
     #race_id_list の生成
-    race_id_list = [f"{2023010101}{str(i).zfill(2)}" for i in range(1, 13)]
-    #race_id_list = [base_race_id]
+    #race_id_list = [f"{2023010101}{str(i).zfill(2)}" for i in range(1, 13)]
+    race_id_list = [base_race_id]
     sta = ShutubaTable.scrape(race_id_list, formatted_date)
     sta.data = sta.data.rename(columns=lambda x: x.replace(' ', ''))
     horse_id_list = sta.data['horse_id'].unique()
