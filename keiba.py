@@ -16,6 +16,7 @@ from itertools import combinations, permutations
 import matplotlib.pyplot as plt
 from io import StringIO
 from datetime import datetime
+import itertools
 
 
 
@@ -593,7 +594,487 @@ class Peds:
             df[column] = LabelEncoder().fit_transform(df[column].fillna('Na'))
         self.peds_e = df.astype('category')
 
-        
+class Return:
+    def __init__(self, return_tables):
+        self.return_tables = return_tables
+
+    @classmethod
+    def read_pickle(cls, path_list):
+        df = pd.read_pickle(path_list[0])
+        for path in path_list[1:]:
+            df = update_data(df, pd.read_pickle(path))
+        return cls(df)
+
+    @staticmethod
+    def scrape(race_id_list):
+        return_tables = {}
+        for race_id in (race_id_list):
+            time.sleep(1)
+            try:
+                url = "https://db.netkeiba.com/race/" + race_id
+
+                #普通にスクレイピングすると複勝やワイドなどが区切られないで繋がってしまう。
+                #そのため、改行コードを文字列brに変換して後でsplitする
+                f = urlopen(url)
+                html = f.read()
+                html = html.replace(b'<br />', b'br')
+                dfs = pd.read_html(html)
+
+                #dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
+                df = pd.concat([dfs[1], dfs[2]])
+
+                df.index = [race_id] * len(df)
+                return_tables[race_id] = df
+            except IndexError:
+                continue
+            except AttributeError: #存在しないrace_idでAttributeErrorになるページもあるので追加
+                continue
+            except Exception as e:
+                print(e)
+                break
+            except:
+                break
+
+        #pd.DataFrame型にして一つのデータにまとめる
+        return_tables_df = pd.concat([return_tables[key] for key in return_tables])
+        return return_tables_df
+
+    @property
+    def fukusho(self):
+        fukusho = self.return_tables[self.return_tables[0]=='複勝'][[1,2]]
+        wins = fukusho[1].str.split('br', expand=True)[[0,1,2]]
+
+        wins.columns = ['win_0', 'win_1', 'win_2']
+        returns = fukusho[2].str.split('br', expand=True)[[0,1,2]]
+        returns.columns = ['return_0', 'return_1', 'return_2']
+
+        df = pd.concat([wins, returns], axis=1)
+        for column in df.columns:
+            df[column] = df[column].str.replace(',', '')
+        return df.fillna(0).astype(int)
+
+    @property
+    def tansho(self):
+        tansho = self.return_tables[self.return_tables[0]=='単勝'][[1,2]]
+        tansho.columns = ['win', 'return']
+
+        for column in tansho.columns:
+            tansho[column] = pd.to_numeric(tansho[column], errors='coerce')
+
+        return tansho
+
+    @property
+    def umaren(self):
+        umaren = self.return_tables[self.return_tables[0]=='馬連'][[1,2]]
+        wins = umaren[1].str.split('-', expand=True)[[0,1]].add_prefix('win_')
+        return_ = umaren[2].rename('return')
+        df = pd.concat([wins, return_], axis=1)
+        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
+
+    @property
+    def umatan(self):
+        umatan = self.return_tables[self.return_tables[0]=='馬単'][[1,2]]
+        wins = umatan[1].str.split('→', expand=True)[[0,1]].add_prefix('win_')
+        return_ = umatan[2].rename('return')
+        df = pd.concat([wins, return_], axis=1)
+        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
+
+    @property
+    def wide(self):
+        wide = self.return_tables[self.return_tables[0]=='ワイド'][[1,2]]
+        wins = wide[1].str.split('br', expand=True)[[0,1,2]]
+        wins = wins.stack().str.split('-', expand=True).add_prefix('win_')
+        return_ = wide[2].str.split('br', expand=True)[[0,1,2]]
+        return_ = return_.stack().rename('return')
+        df = pd.concat([wins, return_], axis=1)
+        return df.apply(lambda x: pd.to_numeric(x.str.replace(',',''), errors='coerce'))
+
+    @property
+    def sanrentan(self):
+        rentan = self.return_tables[self.return_tables[0]=='三連単'][[1,2]]
+        wins = rentan[1].str.split('→', expand=True)[[0,1,2]].add_prefix('win_')
+        return_ = rentan[2].rename('return')
+        df = pd.concat([wins, return_], axis=1)
+        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
+
+    @property
+    def sanrenpuku(self):
+        renpuku = self.return_tables[self.return_tables[0]=='三連複'][[1,2]]
+        wins = renpuku[1].str.split('-', expand=True)[[0,1,2]].add_prefix('win_')
+        return_ = renpuku[2].rename('return')
+        df = pd.concat([wins, return_], axis=1)
+        return df.apply(lambda x: pd.to_numeric(x, errors='coerce'))
+
+class ModelEvaluator:
+    def __init__(self, model, return_tables_path_list):
+        self.model = model
+        self.rt = Return.read_pickle(return_tables_path_list)
+        self.fukusho = self.rt.fukusho
+        self.tansho = self.rt.tansho
+        self.umaren = self.rt.umaren
+        self.umatan = self.rt.umatan
+        self.wide = self.rt.wide
+        self.sanrentan = self.rt.sanrentan
+        self.sanrenpuku = self.rt.sanrenpuku
+
+    #3着以内に入る確率を予測
+    def predict_proba(self, X, train=True, std=True, minmax=False):
+        if train:
+            proba = pd.Series(
+                self.model.predict_proba(X.drop(['単勝'], axis=1))[:, 1], index=X.index
+            )
+        else:
+            proba = pd.Series(
+                self.model.predict_proba(X, axis=1)[:, 1], index=X.index
+            )
+        if std:
+            #レース内で標準化して、相対評価する。「レース内偏差値」みたいなもの。
+            standard_scaler = lambda x: (x - x.mean()) / x.std(ddof=0)
+            proba = proba.groupby(level=0).transform(standard_scaler)
+        if minmax:
+            #データ全体を0~1にする
+            proba = (proba - proba.min()) / (proba.max() - proba.min())
+        return proba
+
+    #0か1かを予測
+    def predict(self, X, threshold=0.5):
+        y_pred = self.predict_proba(X)
+        self.proba = y_pred
+        return [0 if p<threshold else 1 for p in y_pred]
+
+    def score(self, y_true, X):
+        return roc_auc_score(y_true, self.predict_proba(X))
+
+    def feature_importance(self, X, n_display=20):
+        importances = pd.DataFrame({"features": X.columns,
+                                    "importance": self.model.feature_importances_})
+        return importances.sort_values("importance", ascending=False)[:n_display]
+
+    def pred_table(self, X, threshold=0.5, bet_only=True):
+        pred_table = X.copy()[['馬番', '単勝']]
+        pred_table['pred'] = self.predict(X, threshold)
+        pred_table['score'] = self.proba
+        if bet_only:
+            return pred_table[pred_table['pred']==1][['馬番', '単勝', 'score']]
+        else:
+            return pred_table[['馬番', '単勝', 'score', 'pred']]
+
+    def bet(self, race_id, kind, umaban, amount):
+        if kind == 'fukusho':
+            rt_1R = self.fukusho.loc[race_id]
+            return_ = (rt_1R[['win_0', 'win_1', 'win_2']]==umaban).values * \
+                rt_1R[['return_0', 'return_1', 'return_2']].values * amount/100
+            return_ = np.sum(return_)
+        if kind == 'tansho':
+            rt_1R = self.tansho.loc[race_id]
+            return_ = (rt_1R['win']==umaban) * rt_1R['return'] * amount/100
+        if kind == 'umaren':
+            rt_1R = self.umaren.loc[race_id]
+            return_ = (set(rt_1R[['win_0', 'win_1']]) == set(umaban)) \
+                * rt_1R['return']/100 * amount
+        if kind == 'umatan':
+            rt_1R = self.umatan.loc[race_id]
+            return_ = (list(rt_1R[['win_0', 'win_1']]) == list(umaban))\
+                * rt_1R['return']/100 * amount
+        if kind == 'wide':
+            rt_1R = self.wide.loc[race_id]
+            return_ = (rt_1R[['win_0', 'win_1']].\
+                           apply(lambda x: set(x)==set(umaban), axis=1)) \
+                * rt_1R['return']/100 * amount
+            return_ = return_.sum()
+        if kind == 'sanrentan':
+            rt_1R = self.sanrentan.loc[race_id]
+            return_ = (list(rt_1R[['win_0', 'win_1', 'win_2']]) == list(umaban)) * \
+                rt_1R['return']/100 * amount
+        if kind == 'sanrenpuku':
+            rt_1R = self.sanrenpuku.loc[race_id]
+            return_ = (set(rt_1R[['win_0', 'win_1', 'win_2']]) == set(umaban)) \
+                * rt_1R['return']/100 * amount
+        if not (return_ >= 0):
+                return_ = amount
+        return return_
+
+    def fukusho_return(self, X, threshold=0.5):
+        pred_table = self.pred_table(X, threshold)
+        n_bets = len(pred_table)
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_list.append(np.sum([
+                self.bet(race_id, 'fukusho', umaban, 1) for umaban in preds['馬番']
+            ]))
+        return_rate = np.sum(return_list) / n_bets
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+        n_hits = np.sum([x>0 for x in return_list])
+        return n_bets, return_rate, n_hits, std
+
+    def tansho_return(self, X, threshold=0.5):
+        pred_table = self.pred_table(X, threshold)
+        self.sample = pred_table
+        n_bets = len(pred_table)
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_list.append(
+                np.sum([self.bet(race_id, 'tansho', umaban, 1) for umaban in preds['馬番']])
+            )
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def tansho_return_proper(self, X, threshold=0.5):
+        pred_table = self.pred_table(X, threshold)
+        n_bets = len(pred_table)
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_list.append(
+                np.sum(preds.apply(lambda x: self.bet(
+                    race_id, 'tansho', x['馬番'], 1/x['単勝']), axis=1)))
+
+        bet_money = (1 / pred_table['単勝']).sum()
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / bet_money
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / bet_money
+        return n_bets, return_rate, n_hits, std
+
+    def umaren_box(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                continue
+            elif len(preds_jiku) >= 2:
+                for umaban in combinations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'umaren', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def umatan_box(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                continue
+            elif len(preds_jiku) >= 2:
+                for umaban in permutations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'umatan', umaban, 1)
+                    n_bets += 1
+            return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def wide_box(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                continue
+            elif len(preds_jiku) >= 2:
+                for umaban in combinations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'wide', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def sanrentan_box(self, X, threshold=0.5):
+        pred_table = self.pred_table(X, threshold)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            if len(preds)<3:
+                continue
+            else:
+                for umaban in permutations(preds['馬番'], 3):
+                    return_ += self.bet(race_id, 'sanrentan', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def sanrenpuku_box(self, X, threshold=0.5):
+        pred_table = self.pred_table(X, threshold)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            if len(preds)<3:
+                continue
+            else:
+                for umaban in combinations(preds['馬番'], 3):
+                    return_ += self.bet(race_id, 'sanrenpuku', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def umaren_nagashi(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                preds_aite = preds.sort_values('score', ascending = False)\
+                    .iloc[1:(n_aite+1)]['馬番']
+                return_ = preds_aite.map(
+                    lambda x: self.bet(
+                        race_id, 'umaren', [preds_jiku['馬番'].values[0], x], 1
+                    )
+                ).sum()
+                n_bets += n_aite
+                return_list.append(return_)
+            elif len(preds_jiku) >= 2:
+                for umaban in combinations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'umaren', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def umatan_nagashi(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                preds_aite = preds.sort_values('score', ascending = False)\
+                    .iloc[1:(n_aite+1)]['馬番']
+                return_ = preds_aite.map(
+                    lambda x: self.bet(
+                        race_id, 'umatan', [preds_jiku['馬番'].values[0], x], 1
+                    )
+                ).sum()
+                n_bets += n_aite
+
+            elif len(preds_jiku) >= 2:
+                for umaban in permutations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'umatan', umaban, 1)
+                    n_bets += 1
+            return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def wide_nagashi(self, X, threshold=0.5, n_aite=5):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            return_ = 0
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                preds_aite = preds.sort_values('score', ascending = False)\
+                    .iloc[1:(n_aite+1)]['馬番']
+                return_ = preds_aite.map(
+                    lambda x: self.bet(
+                        race_id, 'wide', [preds_jiku['馬番'].values[0], x], 1
+                    )
+                ).sum()
+                n_bets += len(preds_aite)
+                return_list.append(return_)
+            elif len(preds_jiku) >= 2:
+                for umaban in combinations(preds_jiku['馬番'], 2):
+                    return_ += self.bet(race_id, 'wide', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+    def sanrentan_nagashi(self, X, threshold = 1.5, n_aite=7):
+        pred_table = self.pred_table(X, threshold, bet_only = False)
+        n_bets = 0
+        return_list = []
+        for race_id, preds in pred_table.groupby(level=0):
+            preds_jiku = preds.query('pred == 1')
+            if len(preds_jiku) == 1:
+                continue
+            elif len(preds_jiku) == 2:
+                preds_aite = preds.sort_values('score', ascending = False)\
+                    .iloc[2:(n_aite+2)]['馬番']
+                return_ = preds_aite.map(
+                    lambda x: self.bet(
+                        race_id, 'sanrentan',
+                        np.append(preds_jiku['馬番'].values, x),
+                        1
+                    )
+                ).sum()
+                n_bets += len(preds_aite)
+                return_list.append(return_)
+            elif len(preds_jiku) >= 3:
+                return_ = 0
+                for umaban in permutations(preds_jiku['馬番'], 3):
+                    return_ += self.bet(race_id, 'sanrentan', umaban, 1)
+                    n_bets += 1
+                return_list.append(return_)
+
+        std = np.std(return_list) * np.sqrt(len(return_list)) / n_bets
+
+        n_hits = np.sum([x>0 for x in return_list])
+        return_rate = np.sum(return_list) / n_bets
+        return n_bets, return_rate, n_hits, std
+
+
 #開催場所をidに変換するための辞書型
 place_dict = {
     '札幌':'01',  '函館':'02',  '福島':'03',  '新潟':'04',  '東京':'05',
@@ -634,6 +1115,10 @@ def load_data(base_race_id):
         column_names = ['枠', '馬 番', '印', '馬名', '性齢', '斤量', '騎手', '厩舎', '馬体重 (増減)', '予想オッズ', '人気', '登録', 'メモ']
         df.columns = column_names
         df.drop(['印', '登録', 'メモ', '予想オッズ', '人気'], axis=1, inplace=True)
+
+        # 斤量カラムの値を整数に変換
+        df['斤量'] = df['斤量'].astype(float).astype(int)
+
         return df
     except Exception as e:
         st.write(f"エラーが発生しました: {e}")
@@ -877,7 +1362,8 @@ def generate_column_names():
 
 
 # Streamlit UI
-st.title("競馬AI予想🐎")
+#st.title("競馬AI予想🐎")
+st.image("KEIBA_TITLE.png", use_column_width=True)
 
 years = list(reversed(range(2014, 2024)))
 year = st.selectbox('開催年を選択してください', years)
@@ -1006,11 +1492,11 @@ if st.button('AI予想'):
 
     data_pe = pd.get_dummies(data_pe, columns=['weather', 'race_type', 'ground_state', '性'])
 
-    st.write("5世代分の血統データの追加: ", data_pe)
+    # st.write("5世代分の血統データの追加: ", data_pe)
 
 
     # LightGBMモデルを読み込む
-    lgb_clf = lgb.Booster(model_file="lgb_model.txt")
+    lgb_clf = lgb.Booster(model_file="lgb_model_2023_2013.txt")
 
     data_c = data_pe.drop(['date'], axis=1)
 
@@ -1073,19 +1559,43 @@ if st.button('AI予想'):
                 st.markdown(f"**レース名:** {additional_data['race_name']}")
 
             st.dataframe(df)
-
-
-
-
-            # そのレースのTOP3予測を表示
-            if race_id in top_3_per_race.index.levels[0]:
-                top_3_data = top_3_per_race.loc[race_id]
+            
+            # そのレースの全予測結果を表示
+            if race_id in sorted_predictions.index:
+                all_data = sorted_predictions.loc[race_id]
 
                 # 列名を変更
-                top_3_data_renamed = top_3_data.rename(columns={'Predicted_Rank': 'AI予想'})
+                all_data_renamed = all_data.rename(columns={'Predicted_Rank': 'AI予想'})
 
                 # Streamlit で表示
                 st.write(f"3位以内に入る確率")
-                st.dataframe(top_3_data_renamed[['AI予想', '馬番']])
+                st.dataframe(all_data_renamed[['AI予想', '馬番']])
+
+    import pandas as pd
+    # スクレイピングを行い、結果を一時的に保存
+    data = Return.scrape(race_id_list)
+    
+    
+    df = pd.DataFrame(data)
+
+    # 全ての列で 'br' を '/' に置換
+    for col in df.columns:
+        df[col] = df[col].apply(lambda x: x.replace('br', '/') if isinstance(x, str) else x)
+
+    # 列名を変更
+    df.rename(columns={
+        0: '馬券種類',
+        1: '結果',
+        2: '払戻',
+        3: '人気'
+    }, inplace=True)
+
+    st.write(df)
+
+            
+
                 
+            
+
+
 
